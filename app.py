@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
+import os
 from datetime import datetime
 
 # ==========================================
-# FUNÇÃO AUXILIAR: FORMATAR MOEDA (R$ BRASIL)
+# FUNÇÃO AUXILIAR: FORMATAR MOEDA
 # ==========================================
 def formatar_moeda(valor):
-    # Transforma 1234.56 em "R$ 1.234,56"
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # ==========================================
-# 1. MOTOR MATEMÁTICO (BACKEND FEFO + CUSTOS)
+# 1. MOTOR MATEMÁTICO (BACKEND FEFO + CUSTOS FIXOS)
 # ==========================================
-def processar_com_consumo_futuro(caminho_pcp, caminho_precos=None):
+def processar_com_consumo_futuro(caminho_pcp, nome_arquivo_precos="mm60.xlsx"):
     df = pd.read_excel(caminho_pcp)
     df.columns = df.columns.str.strip().str.lower()
     
@@ -23,33 +23,31 @@ def processar_com_consumo_futuro(caminho_pcp, caminho_precos=None):
     df = df.dropna(subset=['validade']).sort_values(by='validade')
     
     # ---------------------------------------------------------
-    # NOVO: DICIONÁRIO DE PREÇOS (O PROCV DO PYTHON)
+    # LEITURA AUTOMÁTICA DA MM60 NO SERVIDOR
     # ---------------------------------------------------------
     tem_preco = False
     dict_precos = {}
     
-    if caminho_precos is not None:
-        df_precos = pd.read_excel(caminho_precos)
+    # Verifica se a planilha mm60.xlsx foi colocada lá no GitHub
+    if os.path.exists(nome_arquivo_precos):
+        df_precos = pd.read_excel(nome_arquivo_precos)
         df_precos.columns = df_precos.columns.str.strip().str.lower()
         
-        # Procura as colunas de material e preco na planilha anexada
         col_mat_preco = 'material' if 'material' in df_precos.columns else df_precos.columns[0]
         col_val_preco = 'preco' if 'preco' in df_precos.columns else df_precos.columns[1]
         
-        # Cria um dicionário rápido na memória: {"Cafe_Em_Po": 15.50}
         dict_precos = dict(zip(df_precos[col_mat_preco].astype(str).str.strip(), df_precos[col_val_preco].astype(float)))
         tem_preco = True
         
-    # Verifica como a coluna do material se chama na planilha principal
     col_mat_main = 'material' if 'material' in df.columns else 'codigo' if 'codigo' in df.columns else None
 
     total_geral_lixo = 0.0
-    total_geral_reais = 0.0 # NOVO: Acumulador de Dinheiro
+    total_geral_reais = 0.0 
     mrp_acumulado_pendente = 0.0 
     relatorio_lotes = []
     
     lixo_por_mes = {} 
-    lixo_reais_por_mes = {} # NOVO: Dinheiro por mês
+    lixo_reais_por_mes = {} 
     ruptura_por_mes = {} 
     
     for index, row in df.iterrows():
@@ -58,7 +56,6 @@ def processar_com_consumo_futuro(caminho_pcp, caminho_precos=None):
         validade_lote = row['validade']
         mes_ref = validade_lote.strftime('%m/%Y')
         
-        # Resgata o preço unitário do material desta linha
         preco_unitario = 0.0
         nome_material = "Item Único"
         if tem_preco and col_mat_main in df.columns:
@@ -89,7 +86,7 @@ def processar_com_consumo_futuro(caminho_pcp, caminho_precos=None):
         if sobra > 0.0:
             status = f"🚨 LIXO"
             meta_extra = sobra
-            perda_financeira = sobra * preco_unitario # A CONTA FINANCEIRA AQUI!
+            perda_financeira = sobra * preco_unitario 
             
             total_geral_lixo = round(total_geral_lixo + sobra, 2)
             total_geral_reais = round(total_geral_reais + perda_financeira, 2)
@@ -125,21 +122,20 @@ def processar_com_consumo_futuro(caminho_pcp, caminho_precos=None):
 st.set_page_config(page_title="PlanSupri - Projeção FEFO", page_icon="📊", layout="wide")
 
 st.title("📊 PlanSupri: Projeção FEFO Financeira")
-st.markdown("Calcule desperdícios, rupturas e o **Impacto Financeiro (R$)** anexando sua planilha de PCP e o Dicionário de Preços.")
+st.markdown("Faça o upload da planilha de PCP. Os custos serão calculados automaticamente usando a MM60 cadastrada no sistema.")
 
-# Layout de duas colunas para os botões de upload
-col1, col2 = st.columns(2)
-with col1:
-    arquivo_pcp = st.file_uploader("1. Planilha de PCP (.xlsx)", type=["xlsx"])
-with col2:
-    arquivo_precos = st.file_uploader("2. Planilha de Preços (.xlsx) - Opcional", type=["xlsx"])
+# Agora temos apenas um botão limpo e direto
+arquivo_pcp = st.file_uploader("Anexe a planilha de PCP (.xlsx)", type=["xlsx"])
 
 if arquivo_pcp is not None:
     try:
-        with st.spinner('Cruzando dados e calculando perdas financeiras...'):
-            resultado = processar_com_consumo_futuro(arquivo_pcp, arquivo_precos)
+        with st.spinner('Cruzando dados com a MM60 e calculando perdas financeiras...'):
+            resultado = processar_com_consumo_futuro(arquivo_pcp)
             
         st.success("Cálculo concluído com sucesso!")
+        
+        if not resultado['tem_preco']:
+            st.warning("⚠️ Aviso: O arquivo 'mm60.xlsx' não foi encontrado no servidor. O painel exibirá apenas os dados físicos.")
         
         # --- PAINEL DE TOTAIS GERAIS ---
         if resultado['tem_preco'] and resultado['total_reais'] > 0:
@@ -178,4 +174,4 @@ if arquivo_pcp is not None:
         st.dataframe(df_detalhe, use_container_width=True)
             
     except Exception as e:
-        st.error(f"Erro ao processar as planilhas. Certifique-se de que a coluna 'Material' exista em ambas. Detalhe do erro: {e}")
+        st.error(f"Erro ao processar as planilhas. Detalhe do erro: {e}")
